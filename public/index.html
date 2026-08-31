@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Mini Royale Web</title>
+    <style>
+        body { margin: 0; background: #111; color: #fff; font-family: sans-serif; overflow: hidden; text-align: center; }
+        #menu { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; }
+        input, button { padding: 10px 20px; margin: 10px; font-size: 16px; border-radius: 5px; border: none; }
+        button { background: #ff4757; color: white; cursor: pointer; font-weight: bold; }
+        button:hover { background: #ff6b81; }
+        #game-ui { display: none; position: relative; width: 100vw; height: 100vh; }
+        canvas { background: #222; display: block; }
+        #chat-box { position: absolute; bottom: 20px; left: 20px; width: 300px; background: rgba(0,0,0,0.6); border-radius: 8px; padding: 10px; text-align: left; }
+        #chat-messages { height: 120px; overflow-y: auto; font-size: 14px; margin-bottom: 5px; }
+        #chat-input { width: calc(100% - 20px); padding: 5px; }
+    </style>
+</head>
+<body>
+
+    <!-- MENÚ PRINCIPAL -->
+    <div id="menu">
+        <h1>BATTLE ROYALE RENDER</h1>
+        <button id="create-btn">Crear Partida</button>
+        <div>
+            <input type="text" id="room-input" placeholder="ID de Sala">
+            <button id="join-btn">Unirse con ID</button>
+        </div>
+        <p id="room-display"></p>
+        <button id="start-btn" style="display:none;">¡Iniciar Partida!</button>
+    </div>
+
+    <!-- INTERFAZ DE JUEGO -->
+    <div id="game-ui">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div id="chat-box">
+            <div id="chat-messages"></div>
+            <input type="text" id="chat-input" placeholder="Escribe un mensaje...">
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+
+        const menu = document.getElementById('menu');
+        const gameUi = document.getElementById('game-ui');
+        const createBtn = document.getElementById('create-btn');
+        const joinBtn = document.getElementById('join-btn');
+        const startBtn = document.getElementById('start-btn');
+        const roomInput = document.getElementById('room-input');
+        const roomDisplay = document.getElementById('room-display');
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        let myId = '';
+        let players = {};
+        let myPos = { x: 400, y: 300 };
+
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        createBtn.onclick = () => {
+            socket.emit('create_room', (res) => {
+                if (res.success) {
+                    roomDisplay.innerText = `Código de Sala: ${res.roomId} (Esperando jugadores...)`;
+                    startBtn.style.display = 'block';
+                    createBtn.style.display = 'none';
+                    joinBtn.style.display = 'none';
+                    roomInput.style.display = 'none';
+                }
+            });
+        };
+
+        joinBtn.onclick = () => {
+            const roomId = roomInput.value;
+            if (!roomId) return alert('Ingresa un ID válido');
+            socket.emit('join_room', { roomId }, (res) => {
+                if (res.success) {
+                    menu.style.display = 'none';
+                    gameUi.style.display = 'block';
+                } else {
+                    alert(res.message);
+                }
+            });
+        };
+
+        startBtn.onclick = () => {
+            socket.emit('start_game');
+        };
+
+        socket.on('game_started', () => {
+            menu.style.display = 'none';
+            gameUi.style.display = 'block';
+            requestAnimationFrame(gameLoop);
+        });
+
+        socket.on('update_players', (serverPlayers) => {
+            players = serverPlayers;
+        });
+
+        // Controles de Movimiento (WASD)
+        window.addEventListener('keydown', (e) => {
+            const speed = 5;
+            if (e.key === 'w') myPos.y -= speed;
+            if (e.key === 's') myPos.y += speed;
+            if (e.key === 'a') myPos.x -= speed;
+            if (e.key === 'd') myPos.x += speed;
+            socket.emit('player_move', myPos);
+        });
+
+        socket.on('player_moved', (data) => {
+            if (players[data.id]) {
+                players[data.id].x = data.x;
+                players[data.id].y = data.y;
+            }
+        });
+
+        // Bucle de Renderizado
+        function gameLoop() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Dibujar jugadores
+            for (let id in players) {
+                const p = players[id];
+                ctx.fillStyle = (id === socket.id) ? '#ff4757' : '#2ed573';
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 20, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.fillText(id.substring(0, 4), p.x - 10, p.y - 25);
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Sistema de Chat estilo Fortnite
+        const chatInput = document.getElementById('chat-input');
+        const chatMessages = document.getElementById('chat-messages');
+
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && chatInput.value.trim() !== '') {
+                socket.emit('send_chat', chatInput.value);
+                chatInput.value = '';
+            }
+        });
+
+        socket.on('receive_chat', (data) => {
+            const div = document.createElement('div');
+            div.innerHTML = `<strong>[${data.sender}]</strong>: ${data.message}`;
+            chatMessages.appendChild(div);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        });
+    </script>
+</body>
+</html>
